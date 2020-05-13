@@ -1,0 +1,49 @@
+name: 'integration / bugtracker'
+
+on:
+  push:
+    branches: master
+  pull_request:
+
+jobs:
+  bugzilla:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.7]
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v1
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Dockerize
+      run: |
+        docker-compose -f tests/docker-compose.bugtrackers build
+        docker-compose -f tests/docker-compose.bugtrackers up -d
+        sleep 10
+
+        BUGZILLA_ADDR=`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' bugzilla_example_bg`
+        sudo sh -c "echo '$BUGZILLA_ADDR    bugzilla.example.bg' >> /etc/hosts"
+
+    - name: Initialize bugs DB
+      run: |
+        pip install -r requirements/tarballs.txt
+        ./tests/bugzilla/initialize-data
+
+    - name: Execute tests
+      run: |
+        sudo apt-get install libkrb5-dev
+        pip install -r requirements/devel.txt
+
+        export LANG="en_US.UTF-8"
+        export TEST_BUGTRACKER_INTEGRATION=1
+        coverage run --source='.' ./manage.py test -v2 --noinput --settings=tcms.settings.test tcms.issuetracker.tests.test_bugzilla
+
+    - name: Send coverage to Codecov
+      run: |
+        pip install codecov
+        codecov
